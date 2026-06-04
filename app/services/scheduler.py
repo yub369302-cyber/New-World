@@ -28,20 +28,20 @@ def setup_scheduler():
     )
 
     scheduler.start()
-    print(f"[调度] 定时任务已启动，执行时间: 每天 {hours_str} 点整")
+    print(f"[调度] 定时任务已启动, 执行时间: 每天 {hours_str} 点整")
 
 
 async def _run_job():
     """定时任务执行入口"""
     print("\n" + "=" * 50)
-    print("🚀 Job Hunter 自动任务开始执行...")
+    print("[Job Hunter] 自动任务开始执行...")
     print("=" * 50)
 
     try:
         result = await run_pipeline()
-        print(f"\n✅ 任务完成: 推荐 {result.get('total', 0)} 个岗位")
+        print(f"\n[完成] 任务完成: 推荐 {result.get('total', 0)} 个岗位")
     except Exception as e:
-        print(f"\n❌ 任务执行失败: {e}")
+        print(f"\n[失败] 任务执行失败: {e}")
 
 
 async def run_now():

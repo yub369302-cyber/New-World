@@ -13,14 +13,19 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import Optional
 
 from app.config import settings
 from app.services.scheduler import setup_scheduler, run_now, scheduler
 from app.services.pipeline import run_pipeline
+from app.services.ai_analyzer import AIAnalyzer
 
 # 运行状态跟踪
 run_history: list = []
 is_running: bool = False
+latest_jobs: list = []  # 最新推荐的岗位列表
+user_profile: dict = {}  # 用户档案
 
 
 @asynccontextmanager
@@ -28,16 +33,16 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时初始化调度器
     setup_scheduler()
-    print("\n🎯 Job Hunter 已启动！")
+    print("\n[Job Hunter] 已启动!")
     print(f"   调度时间: 每天 {settings.SCHEDULE_HOURS} 点")
     print(f"   搜索关键词: {settings.JOB_KEYWORDS}")
     print(f"   目标城市: {settings.JOB_CITIES}")
     print(f"   邮箱推送: {settings.RECIPIENT_EMAIL}")
-    print(f"\n🌐 访问管理面板: http://localhost:8000")
+    print("\n[Web] 访问管理面板: http://localhost:8000")
     yield
     # 关闭时停止调度器
     scheduler.shutdown(wait=False)
-    print("\n👋 Job Hunter 已停止")
+    print("\n[Job Hunter] 已停止")
 
 
 # 创建 FastAPI 应用
@@ -60,7 +65,7 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
 @app.get("/")
 async def index(request: Request):
     """管理面板首页"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("index.html", {"request": request, "config": settings})
 
 
 # ==================== API 路由 ====================
@@ -83,13 +88,16 @@ async def api_run(background_tasks: BackgroundTasks):
 
 async def _execute_pipeline():
     """后台执行流程并记录结果"""
-    global is_running
+    global is_running, latest_jobs
     is_running = True
 
     try:
         result = await run_pipeline()
         result["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         run_history.insert(0, result)
+        # 保存岗位详情供前端使用
+        if "jobs" in result:
+            latest_jobs = result["jobs"]
         # 只保留最近 50 条记录
         if len(run_history) > 50:
             run_history.pop()
@@ -153,6 +161,135 @@ async def api_status():
 async def api_health():
     """健康检查"""
     return {"status": "ok", "timestamp": datetime.now().isoformat()}
+
+
+# ==================== 新增 API：档案、岗位、简历生成 ====================
+
+
+@app.post("/api/profile")
+async def api_save_profile(request: Request):
+    """保存用户档案"""
+    global user_profile
+    data = await request.json()
+    user_profile = data
+    # 持久化到本地文件
+    profile_path = Path(settings.DATA_DIR) / "profile.json"
+    profile_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"success": True, "message": "档案已保存"}
+
+
+@app.get("/api/profile")
+async def api_get_profile():
+    """获取用户档案"""
+    global user_profile
+    if not user_profile:
+        profile_path = Path(settings.DATA_DIR) / "profile.json"
+        if profile_path.exists():
+            user_profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    return user_profile or {}
+
+
+@app.get("/api/jobs")
+async def api_get_jobs():
+    """获取最新推荐的岗位详情列表"""
+    return latest_jobs
+
+
+@app.post("/api/generate-resume")
+async def api_generate_resume(request: Request):
+    """根据用户档案 + JD 生成定制简历"""
+    data = await request.json()
+    profile = data.get("profile", {})
+    jd = data.get("jd", "")
+
+    if not profile.get("name"):
+        return JSONResponse(status_code=400, content={"error": "请先填写个人档案"})
+    if not jd:
+        return JSONResponse(status_code=400, content={"error": "请提供岗位描述(JD)"})
+
+    # 构造 prompt
+    profile_text = _format_profile_for_ai(profile)
+    prompt = f"""你是一位专业的求职顾问和简历优化专家。请根据以下个人信息和目标岗位JD，生成一份量身定制的简历内容。
+
+要求：
+1. 根据JD中的关键要求，重新组织和优化个人经历的描述
+2. 突出与岗位最相关的技能和经验
+3. 使用STAR法则描述经历（情景-任务-行动-结果）
+4. 适当添加量化成果（如处理了多少数据、提升了多少效率）
+5. 语言专业精练，符合求职简历的规范
+6. 输出格式为结构化的简历文本
+
+===== 个人信息 =====
+{profile_text}
+
+===== 目标岗位JD =====
+{jd}
+
+请生成定制简历内容："""
+
+    try:
+        analyzer = AIAnalyzer()
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            base_url=settings.OPENAI_BASE_URL,
+        )
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=2000,
+        )
+        resume_text = response.choices[0].message.content
+        return {"resume": resume_text}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"AI生成失败: {str(e)}"})
+
+
+def _format_profile_for_ai(profile: dict) -> str:
+    """将用户档案格式化为AI可读的文本"""
+    lines = []
+    if profile.get("name"):
+        lines.append(f"姓名: {profile['name']}")
+    if profile.get("education"):
+        lines.append(f"学历: {profile['education']}")
+    if profile.get("school"):
+        lines.append(f"院校: {profile['school']}")
+    if profile.get("major"):
+        lines.append(f"专业: {profile['major']}")
+    if profile.get("gradTime"):
+        lines.append(f"毕业时间: {profile['gradTime']}")
+    if profile.get("gpa"):
+        lines.append(f"GPA/排名: {profile['gpa']}")
+
+    skills = []
+    if profile.get("skillsData"):
+        skills.extend(profile["skillsData"])
+    if profile.get("skillsOther"):
+        skills.extend(profile["skillsOther"])
+    if skills:
+        lines.append(f"技能: {', '.join(skills)}")
+
+    if profile.get("skillsLang"):
+        lines.append(f"语言能力: {', '.join(profile['skillsLang'])}")
+
+    if profile.get("experiences"):
+        lines.append("\n实习/项目经历:")
+        for i, exp in enumerate(profile["experiences"], 1):
+            lines.append(f"  {i}. {exp.get('company','')} - {exp.get('role','')}")
+            if exp.get("time"):
+                lines.append(f"     时间: {exp['time']}")
+            if exp.get("desc"):
+                lines.append(f"     内容: {exp['desc']}")
+
+    if profile.get("industries"):
+        lines.append(f"目标行业: {', '.join(profile['industries'])}")
+    if profile.get("positions"):
+        lines.append(f"目标岗位: {', '.join(profile['positions'])}")
+    if profile.get("intro"):
+        lines.append(f"自我介绍: {profile['intro']}")
+
+    return "\n".join(lines)
 
 
 # ==================== 辅助函数 ====================
