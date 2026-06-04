@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Hunter AI - 智能求职助手</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; min-height: 100vh; }
+
+        .navbar { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+        .navbar h1 { font-size: 22px; }
+        .navbar .status { font-size: 13px; opacity: 0.9; }
+
+        .container { max-width: 1000px; margin: 30px auto; padding: 0 20px; }
+
+        .card { background: white; border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+        .card h2 { font-size: 18px; color: #333; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+
+        .actions { display: flex; gap: 12px; flex-wrap: wrap; }
+        .btn { padding: 10px 20px; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; font-weight: 500; transition: all 0.2s; }
+        .btn-primary { background: #667eea; color: white; }
+        .btn-primary:hover { background: #5a6fd6; }
+        .btn-secondary { background: #f0f2f5; color: #333; border: 1px solid #ddd; }
+        .btn-secondary:hover { background: #e8eaed; }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        @media (max-width: 600px) { .config-grid { grid-template-columns: 1fr; } }
+
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; font-size: 13px; color: #666; margin-bottom: 4px; font-weight: 500; }
+        .form-group input, .form-group textarea { width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; transition: border-color 0.2s; }
+        .form-group input:focus, .form-group textarea:focus { outline: none; border-color: #667eea; }
+        .form-group textarea { resize: vertical; min-height: 80px; }
+
+        .log-area { background: #1e1e1e; color: #d4d4d4; border-radius: 8px; padding: 16px; font-family: 'Courier New', monospace; font-size: 13px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; line-height: 1.6; }
+        .log-success { color: #4ec9b0; }
+        .log-error { color: #f48771; }
+        .log-info { color: #569cd6; }
+
+        .history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .history-table th { background: #f8f9fa; padding: 10px; text-align: left; border-bottom: 2px solid #eee; color: #666; font-weight: 600; }
+        .history-table td { padding: 10px; border-bottom: 1px solid #f0f0f0; }
+        .history-table tr:hover { background: #f8f9fa; }
+
+        .score-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+        .score-high { background: #e8f5e9; color: #2e7d32; }
+        .score-medium { background: #fff3e0; color: #e65100; }
+        .score-low { background: #fce4ec; color: #c62828; }
+
+        .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <h1>🎯 Job Hunter AI</h1>
+        <div class="status" id="status">就绪</div>
+    </div>
+
+    <div class="container">
+        <!-- 操作面板 -->
+        <div class="card">
+            <h2>⚡ 快速操作</h2>
+            <div class="actions">
+                <button class="btn btn-primary" id="btn-run" onclick="runNow()">🚀 立即执行一次</button>
+                <button class="btn btn-secondary" onclick="loadHistory()">📊 刷新历史记录</button>
+                <button class="btn btn-secondary" onclick="saveConfig()">💾 保存配置</button>
+            </div>
+        </div>
+
+        <!-- 配置面板 -->
+        <div class="card">
+            <h2>⚙️ 搜索配置</h2>
+            <div class="config-grid">
+                <div class="form-group">
+                    <label>搜索关键词（逗号分隔）</label>
+                    <input type="text" id="keywords" value="{{ config.JOB_KEYWORDS | join(',') }}">
+                </div>
+                <div class="form-group">
+                    <label>目标城市（逗号分隔）</label>
+                    <input type="text" id="cities" value="{{ config.JOB_CITIES | join(',') }}">
+                </div>
+                <div class="form-group">
+                    <label>岗位类型</label>
+                    <input type="text" id="job_type" value="{{ config.JOB_TYPE }}">
+                </div>
+                <div class="form-group">
+                    <label>排除关键词（逗号分隔）</label>
+                    <input type="text" id="exclude" value="{{ config.JOB_EXCLUDE_KEYWORDS | join(',') }}">
+                </div>
+            </div>
+            <div class="form-group" style="margin-top: 12px;">
+                <label>简历摘要（AI 会根据这个匹配岗位）</label>
+                <textarea id="resume" rows="4">{{ config.RESUME_SUMMARY }}</textarea>
+            </div>
+        </div>
+
+        <!-- 执行日志 -->
+        <div class="card">
+            <h2>📋 执行日志</h2>
+            <div class="log-area" id="log">等待执行...</div>
+        </div>
+
+        <!-- 历史记录 -->
+        <div class="card">
+            <h2>📊 最近推荐记录</h2>
+            <div style="overflow-x: auto;">
+                <table class="history-table" id="history-table">
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            <th>职位</th>
+                            <th>公司</th>
+                            <th>城市</th>
+                            <th>匹配度</th>
+                            <th>来源</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-body">
+                        <tr><td colspan="6" style="text-align:center; color:#999;">点击"刷新历史记录"加载数据</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const logEl = document.getElementById('log');
+        const statusEl = document.getElementById('status');
+        const btnRun = document.getElementById('btn-run');
+
+        function addLog(msg, type = '') {
+            const cls = type ? ` class="log-${type}"` : '';
+            logEl.innerHTML += `<span${cls}>${msg}\n</span>`;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        async function runNow() {
+            btnRun.disabled = true;
+            btnRun.innerHTML = '<span class="spinner"></span>执行中...';
+            statusEl.textContent = '正在执行...';
+            logEl.innerHTML = '';
+            addLog('[开始] 启动自动搜索流程...', 'info');
+
+            try {
+                const resp = await fetch('/api/run', { method: 'POST' });
+                const data = await resp.json();
+
+                if (data.status === 'success') {
+                    addLog(`[完成] 推荐 ${data.total} 个岗位（高匹配 ${data.high_match} 个）`, 'success');
+                    addLog(`[邮件] ${data.email_sent ? '已发送' : '发送失败'}`, data.email_sent ? 'success' : 'error');
+                    addLog(`[耗时] ${data.elapsed_seconds}s`, 'info');
+                    statusEl.textContent = `上次执行: ${new Date().toLocaleTimeString()} | ${data.total}个推荐`;
+                    loadHistory();
+                } else {
+                    addLog(`[结果] ${data.status}`, 'error');
+                    statusEl.textContent = '执行完成（无结果）';
+                }
+            } catch (e) {
+                addLog(`[错误] ${e.message}`, 'error');
+                statusEl.textContent = '执行失败';
+            }
+
+            btnRun.disabled = false;
+            btnRun.innerHTML = '🚀 立即执行一次';
+        }
+
+        async function loadHistory() {
+            try {
+                const resp = await fetch('/api/history');
+                const data = await resp.json();
+                const tbody = document.getElementById('history-body');
+
+                if (data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#999;">暂无记录</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.map(job => {
+                    const score = job.score || 0;
+                    let scoreClass = 'score-low';
+                    if (score >= 70) scoreClass = 'score-high';
+                    else if (score >= 50) scoreClass = 'score-medium';
+
+                    return `<tr>
+                        <td>${job.date || ''}</td>
+                        <td><strong>${job.title || ''}</strong></td>
+                        <td>${job.company || ''}</td>
+                        <td>${job.location || ''}</td>
+                        <td><span class="score-badge ${scoreClass}">${score}分</span></td>
+                        <td>${job.source || ''}</td>
+                    </tr>`;
+                }).join('');
+            } catch (e) {
+                console.error('加载历史失败:', e);
+            }
+        }
+
+        async function saveConfig() {
+            const config = {
+                keywords: document.getElementById('keywords').value,
+                cities: document.getElementById('cities').value,
+                job_type: document.getElementById('job_type').value,
+                exclude: document.getElementById('exclude').value,
+                resume: document.getElementById('resume').value,
+            };
+
+            try {
+                const resp = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    alert('✅ 配置已保存！下次执行将使用新配置。');
+                }
+            } catch (e) {
+                alert('❌ 保存失败: ' + e.message);
+            }
+        }
+
+        // 页面加载时获取历史
+        loadHistory();
+    </script>
+</body>
+</html>
