@@ -96,6 +96,7 @@
         <h1>Job Hunter AI</h1>
         <div class="nav-tabs">
             <button class="nav-tab active" data-tab="profile">我的档案</button>
+            <button class="nav-tab" data-tab="boss">BOSS直聘</button>
             <button class="nav-tab" data-tab="recommend">岗位推荐</button>
             <button class="nav-tab" data-tab="analysis">匹配分析</button>
             <button class="nav-tab" data-tab="resume">简历生成</button>
@@ -190,6 +191,67 @@
                 <div class="actions">
                     <button class="btn btn-primary btn-lg" onclick="saveProfile()">保存档案</button>
                     <button class="btn btn-secondary" onclick="loadProfile()">恢复上次</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- BOSS 直聘 -->
+        <div class="section" id="section-boss">
+            <div class="card">
+                <h2>BOSS 直聘</h2>
+                <p style="color:#666; font-size:13px; margin-bottom:16px;">直连 BOSS 直聘平台：搜索职位、打招呼、查看沟通</p>
+
+                <!-- 登录状态 -->
+                <div style="display:flex; align-items:center; gap:12px; margin-bottom:20px; padding:12px 16px; background:#f8f9ff; border-radius:8px;">
+                    <span style="font-size:13px; color:#555;">登录状态：</span>
+                    <span id="boss-status-text" style="font-size:13px; font-weight:600; color:#999;">检查中...</span>
+                    <button class="btn btn-secondary" style="margin-left:auto; padding:6px 14px; font-size:12px;" onclick="checkBossStatus()">刷新状态</button>
+                    <button class="btn btn-primary" style="padding:6px 14px; font-size:12px;" id="btn-boss-login" onclick="bossLogin()">登录</button>
+                </div>
+
+                <!-- 搜索 -->
+                <h3 style="border-top:none; padding-top:0; margin-top:8px;">搜索职位</h3>
+                <div class="form-grid">
+                    <div class="form-group"><label>关键词</label><input type="text" id="boss-query" placeholder="如：数据分析"></div>
+                    <div class="form-group"><label>城市</label><input type="text" id="boss-city" placeholder="如：北京"></div>
+                    <div class="form-group"><label>薪资范围</label><input type="text" id="boss-salary" placeholder="如：10-20K"></div>
+                    <div class="form-group"><label>经验要求</label><input type="text" id="boss-experience" placeholder="如：应届、1-3年"></div>
+                </div>
+                <div class="actions" style="margin-bottom:20px;">
+                    <button class="btn btn-primary" id="btn-boss-search" onclick="bossSearch()">搜索职位</button>
+                    <button class="btn btn-success" id="btn-boss-batch" onclick="bossBatchGreet()">一键打招呼（前10个）</button>
+                    <button class="btn btn-secondary" onclick="bossRecommend()">获取个性化推荐</button>
+                </div>
+
+                <!-- 搜索结果 -->
+                <div class="job-list" id="boss-job-list">
+                    <div class="empty-state"><div class="icon">&#128270;</div><p>输入关键词搜索 BOSS 直聘上的职位</p></div>
+                </div>
+            </div>
+
+            <!-- 沟通管理 -->
+            <div class="card" style="margin-top:20px;">
+                <h2>沟通管理</h2>
+                <div style="display:flex; gap:12px; margin-bottom:16px;">
+                    <button class="btn btn-secondary" onclick="loadBossChat('all')">全部沟通</button>
+                    <button class="btn btn-secondary" onclick="loadBossChat('boss')">对方主动</button>
+                    <button class="btn btn-secondary" onclick="loadBossChat('me')">我主动</button>
+                    <button class="btn btn-secondary" onclick="loadBossInterviews()">面试邀请</button>
+                </div>
+                <div id="boss-chat-list">
+                    <div class="empty-state" style="padding:20px;"><p>点击上方按钮加载沟通记录</p></div>
+                </div>
+            </div>
+
+            <!-- 统计 -->
+            <div class="card" style="margin-top:20px;">
+                <h2>求职统计</h2>
+                <div style="display:flex; gap:12px; margin-bottom:16px;">
+                    <button class="btn btn-secondary" onclick="loadBossDigest()">今日日报</button>
+                    <button class="btn btn-secondary" onclick="loadBossStats()">转化漏斗</button>
+                </div>
+                <div id="boss-stats-content">
+                    <div class="empty-state" style="padding:20px;"><p>点击查看求职数据统计</p></div>
                 </div>
             </div>
         </div>
@@ -641,6 +703,256 @@ function downloadResume() {
     a.click();
 }
 
+// ========== BOSS 直聘功能 ==========
+let bossJobs = [];
+
+async function checkBossStatus() {
+    const el = document.getElementById('boss-status-text');
+    el.textContent = '检查中...';
+    el.style.color = '#999';
+    try {
+        const resp = await fetch('/api/boss/status');
+        const data = await resp.json();
+        if (data.ok) {
+            el.textContent = '已登录';
+            el.style.color = '#2e7d32';
+            document.getElementById('btn-boss-login').style.display = 'none';
+        } else {
+            el.textContent = '未登录';
+            el.style.color = '#e53e3e';
+            document.getElementById('btn-boss-login').style.display = '';
+        }
+    } catch(e) {
+        el.textContent = '检查失败';
+        el.style.color = '#e53e3e';
+    }
+}
+
+async function bossLogin() {
+    const btn = document.getElementById('btn-boss-login');
+    btn.disabled = true;
+    btn.textContent = '登录中...';
+    try {
+        const resp = await fetch('/api/boss/login', { method: 'POST' });
+        const data = await resp.json();
+        if (data.ok) {
+            alert('登录成功!');
+            checkBossStatus();
+        } else {
+            alert('登录失败: ' + (data.error || '请扫码或重试'));
+        }
+    } catch(e) {
+        alert('登录请求失败: ' + e.message);
+    }
+    btn.disabled = false;
+    btn.textContent = '登录';
+}
+
+async function bossSearch() {
+    const btn = document.getElementById('btn-boss-search');
+    const query = document.getElementById('boss-query').value.trim();
+    if (!query) { alert('请输入搜索关键词'); return; }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> 搜索中...';
+
+    try {
+        const resp = await fetch('/api/boss/search', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                query,
+                city: document.getElementById('boss-city').value.trim() || null,
+                salary: document.getElementById('boss-salary').value.trim() || null,
+                experience: document.getElementById('boss-experience').value.trim() || null
+            })
+        });
+        const data = await resp.json();
+        bossJobs = data.jobs || [];
+        renderBossJobs(bossJobs);
+    } catch(e) {
+        alert('搜索失败: ' + e.message);
+    }
+    btn.disabled = false;
+    btn.innerHTML = '搜索职位';
+}
+
+async function bossRecommend() {
+    try {
+        const resp = await fetch('/api/boss/recommend');
+        const data = await resp.json();
+        bossJobs = data.jobs || [];
+        renderBossJobs(bossJobs);
+    } catch(e) {
+        alert('获取推荐失败: ' + e.message);
+    }
+}
+
+async function bossBatchGreet() {
+    const query = document.getElementById('boss-query').value.trim();
+    if (!query) { alert('请先输入搜索关键词'); return; }
+    if (!confirm('确认要对搜索结果前10个职位发送打招呼？')) return;
+
+    const btn = document.getElementById('btn-boss-batch');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> 执行中...';
+
+    try {
+        const resp = await fetch('/api/boss/batch-greet', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                query,
+                city: document.getElementById('boss-city').value.trim() || null,
+                salary: document.getElementById('boss-salary').value.trim() || null,
+                experience: document.getElementById('boss-experience').value.trim() || null,
+                count: 10
+            })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            alert('批量打招呼完成! 成功: ' + (data.data?.success_count || 0) + ' 个');
+        } else {
+            alert('批量打招呼失败: ' + (data.error || '未知错误'));
+        }
+    } catch(e) {
+        alert('请求失败: ' + e.message);
+    }
+    btn.disabled = false;
+    btn.innerHTML = '一键打招呼（前10个）';
+}
+
+function renderBossJobs(jobs) {
+    const container = document.getElementById('boss-job-list');
+    if (!jobs || jobs.length === 0) {
+        container.innerHTML = '<div class="empty-state"><p>暂无搜索结果</p></div>';
+        return;
+    }
+    container.innerHTML = jobs.map((job, i) => {
+        return '<div class="job-card">' +
+            '<div class="job-header"><div>' +
+            '<div class="job-title">' + (job.title || '') + '</div>' +
+            '<div class="job-company">' + (job.company || '') + (job.stage_name ? ' · ' + job.stage_name : '') + (job.scale_name ? ' · ' + job.scale_name : '') + '</div>' +
+            '</div><div><div class="job-salary">' + (job.salary || '') + '</div></div></div>' +
+            '<div class="job-tags">' +
+            (job.location ? '<span class="job-tag">' + job.location + '</span>' : '') +
+            (job.experience_name ? '<span class="job-tag">' + job.experience_name + '</span>' : '') +
+            (job.degree_name ? '<span class="job-tag">' + job.degree_name + '</span>' : '') +
+            (job.boss_name ? '<span class="job-tag">HR: ' + job.boss_name + '</span>' : '') +
+            '</div>' +
+            '<div style="margin-top:10px; display:flex; gap:8px;">' +
+            '<button class="btn btn-primary" style="padding:5px 12px; font-size:12px;" onclick="bossGreetOne(' + i + ')">打招呼</button>' +
+            (job.link ? '<a href="' + job.link + '" target="_blank" class="btn btn-secondary" style="padding:5px 12px; font-size:12px; text-decoration:none;">查看详情</a>' : '') +
+            '</div></div>';
+    }).join('');
+}
+
+async function bossGreetOne(index) {
+    const job = bossJobs[index];
+    if (!job || !job.security_id || !job.job_id) {
+        alert('缺少职位信息，无法打招呼');
+        return;
+    }
+    const msg = prompt('自定义打招呼消息（可选，留空使用默认）：', '');
+    try {
+        const resp = await fetch('/api/boss/greet', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                security_id: job.security_id,
+                job_id: job.job_id,
+                message: msg || ''
+            })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            alert('打招呼成功!');
+        } else {
+            alert('打招呼失败: ' + (data.error || '未知错误'));
+        }
+    } catch(e) {
+        alert('请求失败: ' + e.message);
+    }
+}
+
+async function loadBossChat(fromWho) {
+    const container = document.getElementById('boss-chat-list');
+    container.innerHTML = '<div class="empty-state"><span class="spinner"></span> 加载中...</div>';
+    try {
+        let url = '/api/boss/chat?page=1';
+        if (fromWho && fromWho !== 'all') url += '&from_who=' + fromWho;
+        const resp = await fetch(url);
+        const data = await resp.json();
+        const chats = data.chats || [];
+        if (chats.length === 0) {
+            container.innerHTML = '<div class="empty-state"><p>暂无沟通记录</p></div>';
+            return;
+        }
+        container.innerHTML = chats.map(c => {
+            return '<div style="padding:12px; border-bottom:1px solid #f0f0f0; display:flex; justify-content:space-between; align-items:center;">' +
+                '<div><div style="font-weight:600; font-size:14px;">' + (c.boss_name || c.name || '招聘者') + '</div>' +
+                '<div style="font-size:12px; color:#666;">' + (c.job_name || c.title || '') + ' - ' + (c.brand_name || c.company || '') + '</div></div>' +
+                '<div style="font-size:12px; color:#999;">' + (c.last_msg_time || c.update_time || '') + '</div></div>';
+        }).join('');
+    } catch(e) {
+        container.innerHTML = '<div class="empty-state"><p>加载失败: ' + e.message + '</p></div>';
+    }
+}
+
+async function loadBossInterviews() {
+    const container = document.getElementById('boss-chat-list');
+    container.innerHTML = '<div class="empty-state"><span class="spinner"></span> 加载中...</div>';
+    try {
+        const resp = await fetch('/api/boss/interviews');
+        const data = await resp.json();
+        const interviews = data.interviews || [];
+        if (interviews.length === 0) {
+            container.innerHTML = '<div class="empty-state"><p>暂无面试邀请</p></div>';
+            return;
+        }
+        container.innerHTML = interviews.map(item => {
+            return '<div style="padding:12px; border-bottom:1px solid #f0f0f0;">' +
+                '<div style="font-weight:600;">' + (item.job_name || item.title || '面试') + '</div>' +
+                '<div style="font-size:12px; color:#666; margin-top:4px;">' + (item.brand_name || item.company || '') +
+                ' | ' + (item.interview_time || item.time || '') + '</div></div>';
+        }).join('');
+    } catch(e) {
+        container.innerHTML = '<div class="empty-state"><p>加载失败</p></div>';
+    }
+}
+
+async function loadBossDigest() {
+    const container = document.getElementById('boss-stats-content');
+    container.innerHTML = '<div class="empty-state"><span class="spinner"></span> 加载中...</div>';
+    try {
+        const resp = await fetch('/api/boss/digest');
+        const data = await resp.json();
+        if (data.error) {
+            container.innerHTML = '<div class="empty-state"><p>' + data.error + '</p></div>';
+            return;
+        }
+        container.innerHTML = '<pre style="background:#f8f9ff; padding:16px; border-radius:8px; font-size:13px; overflow-x:auto; white-space:pre-wrap;">' + JSON.stringify(data, null, 2) + '</pre>';
+    } catch(e) {
+        container.innerHTML = '<div class="empty-state"><p>加载失败</p></div>';
+    }
+}
+
+async function loadBossStats() {
+    const container = document.getElementById('boss-stats-content');
+    container.innerHTML = '<div class="empty-state"><span class="spinner"></span> 加载中...</div>';
+    try {
+        const resp = await fetch('/api/boss/stats?days=30');
+        const data = await resp.json();
+        if (data.error) {
+            container.innerHTML = '<div class="empty-state"><p>' + data.error + '</p></div>';
+            return;
+        }
+        container.innerHTML = '<pre style="background:#f8f9ff; padding:16px; border-radius:8px; font-size:13px; overflow-x:auto; white-space:pre-wrap;">' + JSON.stringify(data, null, 2) + '</pre>';
+    } catch(e) {
+        container.innerHTML = '<div class="empty-state"><p>加载失败</p></div>';
+    }
+}
+
 // ========== 初始化 ==========
 initTagInput('skills-data-input', 'skills-data-wrap');
 initTagInput('skills-other-input', 'skills-other-wrap');
@@ -658,6 +970,9 @@ fetch('/api/status').then(r=>r.json()).then(d => {
         document.getElementById('status').textContent = '下次执行: ' + d.next_run;
     }
 });
+
+// 检查 BOSS 登录状态
+checkBossStatus();
 </script>
 </body>
 </html>

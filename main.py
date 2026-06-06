@@ -20,6 +20,7 @@ from app.config import settings
 from app.services.scheduler import setup_scheduler, run_now, scheduler
 from app.services.pipeline import run_pipeline
 from app.services.ai_analyzer import AIAnalyzer
+from app.scrapers.boss_scraper import BossScraper
 
 # 运行状态跟踪
 run_history: list = []
@@ -290,6 +291,130 @@ def _format_profile_for_ai(profile: dict) -> str:
         lines.append(f"自我介绍: {profile['intro']}")
 
     return "\n".join(lines)
+
+
+# ==================== BOSS 直聘 API ====================
+
+
+@app.get("/api/boss/status")
+async def api_boss_status():
+    """检查 BOSS 直聘登录状态"""
+    boss = BossScraper()
+    result = await boss.check_status()
+    return result
+
+
+@app.post("/api/boss/login")
+async def api_boss_login():
+    """触发 BOSS 直聘登录"""
+    boss = BossScraper()
+    result = await boss.login(timeout=120)
+    return result
+
+
+@app.post("/api/boss/search")
+async def api_boss_search(request: Request):
+    """BOSS 直聘搜索职位"""
+    data = await request.json()
+    boss = BossScraper()
+    jobs = await boss.search_jobs(
+        query=data.get("query", ""),
+        city=data.get("city"),
+        salary=data.get("salary"),
+        experience=data.get("experience"),
+        education=data.get("education"),
+        industry=data.get("industry"),
+        scale=data.get("scale"),
+        stage=data.get("stage"),
+        job_type=data.get("job_type"),
+        page=data.get("page", 1),
+    )
+    return {"jobs": jobs, "total": len(jobs)}
+
+
+@app.get("/api/boss/recommend")
+async def api_boss_recommend(page: int = 1):
+    """BOSS 直聘个性化推荐"""
+    boss = BossScraper()
+    jobs = await boss.get_recommend(page=page, with_score=True)
+    return {"jobs": jobs, "total": len(jobs)}
+
+
+@app.post("/api/boss/greet")
+async def api_boss_greet(request: Request):
+    """向招聘者打招呼"""
+    data = await request.json()
+    security_id = data.get("security_id", "")
+    job_id = data.get("job_id", "")
+    message = data.get("message", "")
+
+    if not security_id or not job_id:
+        return JSONResponse(status_code=400, content={"error": "缺少 security_id 或 job_id"})
+
+    boss = BossScraper()
+    result = await boss.greet(security_id, job_id, message)
+    return result
+
+
+@app.post("/api/boss/batch-greet")
+async def api_boss_batch_greet(request: Request):
+    """批量打招呼"""
+    data = await request.json()
+    query = data.get("query", "")
+    if not query:
+        return JSONResponse(status_code=400, content={"error": "请提供搜索关键词"})
+
+    boss = BossScraper()
+    result = await boss.batch_greet(
+        query=query,
+        city=data.get("city"),
+        salary=data.get("salary"),
+        experience=data.get("experience"),
+        education=data.get("education"),
+        count=data.get("count", 10),
+        dry_run=data.get("dry_run", False),
+    )
+    return result
+
+
+@app.get("/api/boss/chat")
+async def api_boss_chat(from_who: Optional[str] = None, days: Optional[int] = None, page: int = 1):
+    """获取沟通列表"""
+    boss = BossScraper()
+    chats = await boss.get_chat_list(from_who=from_who, days=days, page=page)
+    return {"chats": chats, "total": len(chats)}
+
+
+@app.get("/api/boss/interviews")
+async def api_boss_interviews():
+    """获取面试邀请"""
+    boss = BossScraper()
+    interviews = await boss.get_interviews()
+    return {"interviews": interviews, "total": len(interviews)}
+
+
+@app.get("/api/boss/digest")
+async def api_boss_digest():
+    """获取日报汇总"""
+    boss = BossScraper()
+    digest = await boss.get_digest()
+    return digest or {"error": "获取日报失败"}
+
+
+@app.get("/api/boss/stats")
+async def api_boss_stats(days: int = 30):
+    """获取投递统计"""
+    boss = BossScraper()
+    stats = await boss.get_stats(days=days)
+    return stats or {"error": "获取统计失败"}
+
+
+@app.get("/api/boss/me")
+async def api_boss_me(section: Optional[str] = None):
+    """获取 BOSS 个人信息"""
+    boss = BossScraper()
+    info = await boss.get_my_info(section=section)
+    return info or {"error": "获取个人信息失败"}
 
 
 # ==================== 辅助函数 ====================
