@@ -89,19 +89,62 @@
         .profile-bar-wrap .bar { height: 6px; background: #e8eaed; border-radius: 3px; overflow: hidden; }
         .profile-bar-wrap .bar-fill { height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); border-radius: 3px; transition: width 0.3s; }
         .profile-bar-wrap .text { font-size: 12px; color: #999; margin-top: 6px; display: flex; justify-content: space-between; }
+        /* 登录弹窗 */
+        .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:1000; align-items:center; justify-content:center; }
+        .modal-overlay.show { display:flex; }
+        .modal { background:white; border-radius:16px; padding:32px; width:380px; max-width:90vw; box-shadow:0 20px 60px rgba(0,0,0,0.2); }
+        .modal h2 { text-align:center; margin-bottom:20px; font-size:20px; color:#333; }
+        .modal .form-group { margin-bottom:16px; }
+        .modal .switch-link { text-align:center; margin-top:16px; font-size:13px; color:#666; }
+        .modal .switch-link a { color:#667eea; cursor:pointer; text-decoration:none; font-weight:500; }
+        .modal .error-msg { color:#e53e3e; font-size:13px; text-align:center; margin-bottom:12px; display:none; }
+        /* 用户头像按钮 */
+        .user-badge { display:flex; align-items:center; gap:8px; background:rgba(255,255,255,0.15); border-radius:20px; padding:6px 14px; cursor:pointer; border:none; color:white; font-size:13px; transition:all 0.2s; }
+        .user-badge:hover { background:rgba(255,255,255,0.25); }
+        .user-avatar { width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,0.3); display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; }
+        .cloud-sync { font-size:11px; color:rgba(255,255,255,0.7); margin-left:auto; }
     </style>
 </head>
 <body>
     <div class="navbar">
         <h1>Job Hunter AI</h1>
-        <div class="nav-tabs">
+        <div class="nav-tabs" id="nav-tabs">
             <button class="nav-tab active" data-tab="profile">我的档案</button>
             <button class="nav-tab" data-tab="boss">BOSS直聘</button>
             <button class="nav-tab" data-tab="recommend">岗位推荐</button>
             <button class="nav-tab" data-tab="analysis">匹配分析</button>
             <button class="nav-tab" data-tab="resume">简历生成</button>
         </div>
-        <div class="status" id="status">就绪</div>
+        <div style="display:flex; align-items:center; gap:12px;">
+            <span class="cloud-sync" id="sync-status"></span>
+            <button class="user-badge" id="user-badge" onclick="onUserBadgeClick()">
+                <span class="user-avatar" id="user-avatar">?</span>
+                <span id="user-display">未登录</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- 登录/注册弹窗 -->
+    <div class="modal-overlay" id="auth-modal">
+        <div class="modal">
+            <h2 id="auth-title">登录</h2>
+            <div class="error-msg" id="auth-error"></div>
+            <div class="form-group">
+                <label>邮箱</label>
+                <input type="email" id="auth-email" placeholder="your@email.com">
+            </div>
+            <div class="form-group">
+                <label>密码</label>
+                <input type="password" id="auth-password" placeholder="至少 6 位">
+            </div>
+            <button class="btn btn-primary btn-lg" style="width:100%;" id="auth-submit" onclick="submitAuth()">登录</button>
+            <div class="switch-link" id="auth-switch">
+                没有账号？<a onclick="toggleAuthMode()">立即注册</a>
+            </div>
+            <div style="text-align:center; margin-top:12px;">
+                <a style="font-size:12px; color:#999; cursor:pointer;" onclick="closeAuthModal()">取消</a>
+            </div>
+        </div>
     </div>
 
     <div class="container">
@@ -134,16 +177,16 @@
 
                 <h3>技能清单</h3>
                 <div class="form-group">
-                    <label>数据分析工具（输入后按 Enter 添加）</label>
-                    <div class="tag-input-wrap" id="skills-data-wrap"><input type="text" id="skills-data-input" placeholder="如 SQL, Excel, Tableau, Python..."></div>
+                    <label>专业技能（输入后按 Enter 添加）</label>
+                    <div class="tag-input-wrap" id="skills-data-wrap"><input type="text" id="skills-data-input" placeholder="如 Java, 财务分析, UI设计, 项目管理, 机器学习..."></div>
                 </div>
                 <div class="form-group">
-                    <label>其他技能 / 证书（输入后按 Enter 添加）</label>
-                    <div class="tag-input-wrap" id="skills-other-wrap"><input type="text" id="skills-other-input" placeholder="如 CPA, CFA, 初级会计..."></div>
+                    <label>工具 / 证书（输入后按 Enter 添加）</label>
+                    <div class="tag-input-wrap" id="skills-other-wrap"><input type="text" id="skills-other-input" placeholder="如 Photoshop, CPA, PMP, AWS认证, 驾照..."></div>
                 </div>
                 <div class="form-group">
                     <label>语言能力（输入后按 Enter 添加）</label>
-                    <div class="tag-input-wrap" id="skills-lang-wrap"><input type="text" id="skills-lang-input" placeholder="如 英语CET-6, 日语N2..."></div>
+                    <div class="tag-input-wrap" id="skills-lang-wrap"><input type="text" id="skills-lang-input" placeholder="如 英语CET-6, 日语N2, 雅思7.0..."></div>
                 </div>
 
                 <h3>实习 / 项目经历</h3>
@@ -315,6 +358,154 @@
     </div>
 
 <script>
+// ========== 认证系统 ==========
+let currentUser = null;
+let accessToken = localStorage.getItem('jh_access_token') || '';
+let refreshToken = localStorage.getItem('jh_refresh_token') || '';
+let authMode = 'login'; // 'login' or 'register'
+
+function authHeaders() {
+    return accessToken ? { 'Authorization': 'Bearer ' + accessToken, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+}
+
+function onUserBadgeClick() {
+    if (currentUser) {
+        if (confirm('当前账号: ' + currentUser.email + '\n\n确定退出登录？')) {
+            logout();
+        }
+    } else {
+        openAuthModal();
+    }
+}
+
+function openAuthModal() {
+    document.getElementById('auth-modal').classList.add('show');
+    document.getElementById('auth-email').focus();
+}
+
+function closeAuthModal() {
+    document.getElementById('auth-modal').classList.remove('show');
+    document.getElementById('auth-error').style.display = 'none';
+}
+
+function toggleAuthMode() {
+    authMode = authMode === 'login' ? 'register' : 'login';
+    document.getElementById('auth-title').textContent = authMode === 'login' ? '登录' : '注册';
+    document.getElementById('auth-submit').textContent = authMode === 'login' ? '登录' : '注册';
+    document.getElementById('auth-switch').innerHTML = authMode === 'login'
+        ? '没有账号？<a onclick="toggleAuthMode()">立即注册</a>'
+        : '已有账号？<a onclick="toggleAuthMode()">去登录</a>';
+    document.getElementById('auth-error').style.display = 'none';
+}
+
+async function submitAuth() {
+    const email = document.getElementById('auth-email').value.trim();
+    const password = document.getElementById('auth-password').value;
+    const errEl = document.getElementById('auth-error');
+    const btn = document.getElementById('auth-submit');
+
+    if (!email || !password) { errEl.textContent = '请输入邮箱和密码'; errEl.style.display = 'block'; return; }
+
+    btn.disabled = true;
+    btn.textContent = '处理中...';
+
+    const url = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    try {
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ email, password })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            // 保存 token
+            accessToken = data.session.access_token;
+            refreshToken = data.session.refresh_token;
+            localStorage.setItem('jh_access_token', accessToken);
+            localStorage.setItem('jh_refresh_token', refreshToken);
+            currentUser = data.user;
+            updateUserUI();
+            closeAuthModal();
+            // 登录后加载云端档案
+            loadCloudProfile();
+        } else {
+            errEl.textContent = data.error || '操作失败';
+            errEl.style.display = 'block';
+        }
+    } catch(e) {
+        errEl.textContent = '网络错误: ' + e.message;
+        errEl.style.display = 'block';
+    }
+    btn.disabled = false;
+    btn.textContent = authMode === 'login' ? '登录' : '注册';
+}
+
+function logout() {
+    accessToken = '';
+    refreshToken = '';
+    currentUser = null;
+    localStorage.removeItem('jh_access_token');
+    localStorage.removeItem('jh_refresh_token');
+    updateUserUI();
+}
+
+function updateUserUI() {
+    const badge = document.getElementById('user-display');
+    const avatar = document.getElementById('user-avatar');
+    if (currentUser) {
+        const name = currentUser.email.split('@')[0];
+        badge.textContent = name;
+        avatar.textContent = name.charAt(0).toUpperCase();
+    } else {
+        badge.textContent = '未登录';
+        avatar.textContent = '?';
+    }
+}
+
+async function checkSession() {
+    if (!accessToken) return;
+    try {
+        const resp = await fetch('/api/auth/me', { headers: authHeaders() });
+        if (resp.ok) {
+            const data = await resp.json();
+            if (data.ok) {
+                currentUser = data.user;
+                updateUserUI();
+                loadCloudProfile();
+                return;
+            }
+        }
+        // token 过期，尝试刷新
+        if (refreshToken) {
+            const refResp = await fetch('/api/auth/refresh', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ refresh_token: refreshToken })
+            });
+            const refData = await refResp.json();
+            if (refData.ok) {
+                accessToken = refData.session.access_token;
+                refreshToken = refData.session.refresh_token;
+                localStorage.setItem('jh_access_token', accessToken);
+                localStorage.setItem('jh_refresh_token', refreshToken);
+                // 重新获取用户
+                const meResp = await fetch('/api/auth/me', { headers: authHeaders() });
+                const meData = await meResp.json();
+                if (meData.ok) {
+                    currentUser = meData.user;
+                    updateUserUI();
+                    loadCloudProfile();
+                    return;
+                }
+            }
+        }
+        // 刷新也失败，清除
+        logout();
+    } catch(e) {
+        // 网络错误忽略
+    }
+}
+
 // ========== 全局状态 ==========
 let recommendedJobs = [];
 let resumeCount = 0;
@@ -442,26 +633,75 @@ function collectProfile() {
     };
 }
 
-function saveProfile() {
+async function saveProfile() {
     const profile = collectProfile();
     localStorage.setItem('jobhunter_profile', JSON.stringify(profile));
-    // 同时发送给后端
-    fetch('/api/profile', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(profile)
-    }).then(r => r.json()).then(d => {
-        alert('档案已保存!');
-    }).catch(() => {
-        alert('档案已保存到本地!（后端同步失败，不影响使用）');
-    });
+
+    if (!currentUser) {
+        alert('档案已保存到本地。登录后可同步到云端，换设备也能恢复。');
+        updateProfileCompleteness();
+        return;
+    }
+
+    // 同步到云端
+    const syncEl = document.getElementById('sync-status');
+    syncEl.textContent = '同步中...';
+    try {
+        const resp = await fetch('/api/profile', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify(profile)
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            syncEl.textContent = '已同步到云端';
+            setTimeout(() => { syncEl.textContent = ''; }, 3000);
+            alert('档案已保存并同步到云端!');
+        } else {
+            syncEl.textContent = '同步失败';
+            alert('档案已保存到本地，云端同步失败: ' + (data.error || ''));
+        }
+    } catch(e) {
+        syncEl.textContent = '同步失败';
+        alert('档案已保存到本地，云端同步失败');
+    }
     updateProfileCompleteness();
 }
 
 function loadProfile() {
     const saved = localStorage.getItem('jobhunter_profile');
     if (!saved) { alert('没有找到已保存的档案'); return; }
-    const p = JSON.parse(saved);
+    fillProfileForm(JSON.parse(saved));
+}
+
+async function loadCloudProfile() {
+    if (!currentUser) return;
+    const syncEl = document.getElementById('sync-status');
+    syncEl.textContent = '加载云端档案...';
+    try {
+        const resp = await fetch('/api/profile', { headers: authHeaders() });
+        const data = await resp.json();
+        if (data.ok && data.profile) {
+            fillProfileForm(data.profile);
+            localStorage.setItem('jobhunter_profile', JSON.stringify(data.profile));
+            syncEl.textContent = '云端已同步';
+            setTimeout(() => { syncEl.textContent = ''; }, 3000);
+        } else if (data.ok && !data.profile) {
+            syncEl.textContent = '云端暂无档案';
+            setTimeout(() => { syncEl.textContent = ''; }, 3000);
+            // 如果本地有数据，尝试上传
+            const local = localStorage.getItem('jobhunter_profile');
+            if (local) fillProfileForm(JSON.parse(local));
+        } else {
+            syncEl.textContent = '';
+        }
+    } catch(e) {
+        syncEl.textContent = '';
+    }
+}
+
+function fillProfileForm(p) {
+    if (!p) return;
     document.getElementById('p-name').value = p.name || '';
     document.getElementById('p-education').value = p.education || '';
     document.getElementById('p-school').value = p.school || '';
@@ -959,15 +1199,11 @@ initTagInput('skills-other-input', 'skills-other-wrap');
 initTagInput('skills-lang-input', 'skills-lang-wrap');
 initTagInput('cities-input', 'cities-wrap');
 
-// 自动加载已保存的档案
-if (localStorage.getItem('jobhunter_profile')) {
-    loadProfile();
-}
-
-// 获取状态
-fetch('/api/status').then(r=>r.json()).then(d => {
-    if (d.next_run) {
-        document.getElementById('status').textContent = '下次执行: ' + d.next_run;
+// 检查用户登录状态（会自动加载云端档案）
+checkSession().then(() => {
+    // 如果未登录但本地有数据，从本地加载
+    if (!currentUser && localStorage.getItem('jobhunter_profile')) {
+        loadProfile();
     }
 });
 

@@ -42,6 +42,11 @@ class Settings:
         int(h) for h in os.getenv("SCHEDULE_HOURS", "10,16,22,4").split(",")
     ]
 
+    # Supabase 云端数据库
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+    SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")  # anon/public key
+    JWT_SECRET: str = os.getenv("JWT_SECRET", "job-hunter-secret-key-2024")
+
     # 数据存储路径
     DATA_DIR: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
     EXCEL_PATH: str = os.path.join(DATA_DIR, "job_recommendations.xlsx")

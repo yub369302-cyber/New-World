@@ -21,12 +21,12 @@ from app.services.scheduler import setup_scheduler, run_now, scheduler
 from app.services.pipeline import run_pipeline
 from app.services.ai_analyzer import AIAnalyzer
 from app.scrapers.boss_scraper import BossScraper
+from app.services import database as db
 
 # 运行状态跟踪
 run_history: list = []
 is_running: bool = False
 latest_jobs: list = []  # 最新推荐的岗位列表
-user_profile: dict = {}  # 用户档案
 
 
 @asynccontextmanager
@@ -164,30 +164,96 @@ async def api_health():
     return {"status": "ok", "timestamp": datetime.now().isoformat()}
 
 
-# ==================== 新增 API：档案、岗位、简历生成 ====================
+# ==================== 用户认证 API ====================
+
+
+def _get_token(request: Request) -> str | None:
+    """从请求头提取 access_token"""
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth[7:]
+    return None
+
+
+def _require_user(request: Request) -> dict | None:
+    """校验用户身份，返回 user dict 或 None"""
+    token = _get_token(request)
+    if not token:
+        return None
+    return db.get_user_from_token(token)
+
+
+@app.post("/api/auth/register")
+async def api_register(request: Request):
+    """用户注册"""
+    data = await request.json()
+    email = data.get("email", "").strip()
+    password = data.get("password", "")
+    if not email or not password:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "请输入邮箱和密码"})
+    if len(password) < 6:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "密码至少 6 位"})
+    result = db.sign_up(email, password)
+    if not result["ok"]:
+        return JSONResponse(status_code=400, content=result)
+    return result
+
+
+@app.post("/api/auth/login")
+async def api_login(request: Request):
+    """用户登录"""
+    data = await request.json()
+    email = data.get("email", "").strip()
+    password = data.get("password", "")
+    if not email or not password:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "请输入邮箱和密码"})
+    result = db.sign_in(email, password)
+    if not result["ok"]:
+        return JSONResponse(status_code=401, content=result)
+    return result
+
+
+@app.get("/api/auth/me")
+async def api_me(request: Request):
+    """获取当前登录用户信息"""
+    user = _require_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "未登录或会话已过期"})
+    return {"ok": True, "user": user}
+
+
+@app.post("/api/auth/refresh")
+async def api_refresh(request: Request):
+    """刷新会话 token"""
+    data = await request.json()
+    refresh_token = data.get("refresh_token", "")
+    if not refresh_token:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "缺少 refresh_token"})
+    return db.refresh_session(refresh_token)
+
+
+# ==================== 档案 API（需登录） ====================
 
 
 @app.post("/api/profile")
 async def api_save_profile(request: Request):
-    """保存用户档案"""
-    global user_profile
+    """保存用户档案到云端"""
+    user = _require_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "请先登录"})
     data = await request.json()
-    user_profile = data
-    # 持久化到本地文件
-    profile_path = Path(settings.DATA_DIR) / "profile.json"
-    profile_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {"success": True, "message": "档案已保存"}
+    result = db.save_profile(user["id"], data)
+    return result
 
 
 @app.get("/api/profile")
-async def api_get_profile():
-    """获取用户档案"""
-    global user_profile
-    if not user_profile:
-        profile_path = Path(settings.DATA_DIR) / "profile.json"
-        if profile_path.exists():
-            user_profile = json.loads(profile_path.read_text(encoding="utf-8"))
-    return user_profile or {}
+async def api_get_profile(request: Request):
+    """获取当前用户的云端档案"""
+    user = _require_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "请先登录"})
+    result = db.load_profile(user["id"])
+    return result
 
 
 @app.get("/api/jobs")
@@ -263,13 +329,10 @@ def _format_profile_for_ai(profile: dict) -> str:
     if profile.get("gpa"):
         lines.append(f"GPA/排名: {profile['gpa']}")
 
-    skills = []
     if profile.get("skillsData"):
-        skills.extend(profile["skillsData"])
+        lines.append(f"专业技能: {', '.join(profile['skillsData'])}")
     if profile.get("skillsOther"):
-        skills.extend(profile["skillsOther"])
-    if skills:
-        lines.append(f"技能: {', '.join(skills)}")
+        lines.append(f"工具/证书: {', '.join(profile['skillsOther'])}")
 
     if profile.get("skillsLang"):
         lines.append(f"语言能力: {', '.join(profile['skillsLang'])}")
