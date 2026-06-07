@@ -183,6 +183,20 @@ async def api_health():
     return {"status": "ok", "timestamp": datetime.now().isoformat()}
 
 
+@app.get("/api/debug/supabase")
+async def api_debug_supabase():
+    """调试：检查 Supabase 配置是否加载（不暴露完整密钥）"""
+    url = settings.SUPABASE_URL
+    key = settings.SUPABASE_KEY
+    return {
+        "supabase_url_set": bool(url),
+        "supabase_url_prefix": url[:30] + "..." if url else "",
+        "supabase_key_set": bool(key),
+        "supabase_key_prefix": key[:20] + "..." if key else "",
+        "supabase_key_length": len(key) if key else 0,
+    }
+
+
 # ==================== 用户认证 API ====================
 
 
