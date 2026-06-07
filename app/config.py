@@ -54,5 +54,6 @@ class Settings:
 
 settings = Settings()
 
-# 确保数据目录存在
-os.makedirs(settings.DATA_DIR, exist_ok=True)
+# 确保数据目录存在（Vercel 环境下跳过，文件系统只读）
+if not os.environ.get("VERCEL"):
+    os.makedirs(settings.DATA_DIR, exist_ok=True)

@@ -2,6 +2,7 @@
 Job Hunter - 智能求职推荐系统
 主入口文件：FastAPI 应用 + API 路由
 """
+import os
 import json
 import asyncio
 from datetime import datetime
@@ -17,11 +18,17 @@ from pydantic import BaseModel
 from typing import Optional
 
 from app.config import settings
-from app.services.scheduler import setup_scheduler, run_now, scheduler
-from app.services.pipeline import run_pipeline
-from app.services.ai_analyzer import AIAnalyzer
-from app.scrapers.boss_scraper import BossScraper
 from app.services import database as db
+
+# 检测是否在 Vercel 无服务器环境中运行
+IS_VERCEL = bool(os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"))
+
+# 仅在非 Vercel 环境下导入需要长驻进程的模块
+if not IS_VERCEL:
+    from app.services.scheduler import setup_scheduler, run_now, scheduler
+    from app.services.pipeline import run_pipeline
+    from app.services.ai_analyzer import AIAnalyzer
+    from app.scrapers.boss_scraper import BossScraper
 
 # 运行状态跟踪
 run_history: list = []
@@ -32,18 +39,20 @@ latest_jobs: list = []  # 最新推荐的岗位列表
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    # 启动时初始化调度器
-    setup_scheduler()
-    print("\n[Job Hunter] 已启动!")
-    print(f"   调度时间: 每天 {settings.SCHEDULE_HOURS} 点")
-    print(f"   搜索关键词: {settings.JOB_KEYWORDS}")
-    print(f"   目标城市: {settings.JOB_CITIES}")
-    print(f"   邮箱推送: {settings.RECIPIENT_EMAIL}")
-    print("\n[Web] 访问管理面板: http://localhost:8000")
+    if not IS_VERCEL:
+        # 仅在本地运行时启动调度器
+        setup_scheduler()
+        print("\n[Job Hunter] 已启动!")
+        print(f"   调度时间: 每天 {settings.SCHEDULE_HOURS} 点")
+        print(f"   搜索关键词: {settings.JOB_KEYWORDS}")
+        print(f"   目标城市: {settings.JOB_CITIES}")
+        print(f"   邮箱推送: {settings.RECIPIENT_EMAIL}")
+        print("\n[Web] 访问管理面板: http://localhost:8000")
     yield
-    # 关闭时停止调度器
-    scheduler.shutdown(wait=False)
-    print("\n[Job Hunter] 已停止")
+    if not IS_VERCEL:
+        # 关闭时停止调度器
+        scheduler.shutdown(wait=False)
+        print("\n[Job Hunter] 已停止")
 
 
 # 创建 FastAPI 应用
@@ -76,6 +85,12 @@ async def index(request: Request):
 async def api_run(background_tasks: BackgroundTasks):
     """手动触发一次完整流程"""
     global is_running
+
+    if IS_VERCEL:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unavailable", "message": "云端部署不支持后台任务，请在本地运行此功能"},
+        )
 
     if is_running:
         return JSONResponse(
@@ -143,15 +158,19 @@ async def api_config():
 async def api_status():
     """系统状态"""
     next_run = None
-    jobs = scheduler.get_jobs()
-    if jobs:
-        next_run_time = jobs[0].next_run_time
-        if next_run_time:
-            next_run = next_run_time.strftime("%Y-%m-%d %H:%M:%S")
+    scheduler_running = False
+
+    if not IS_VERCEL:
+        jobs = scheduler.get_jobs()
+        if jobs:
+            next_run_time = jobs[0].next_run_time
+            if next_run_time:
+                next_run = next_run_time.strftime("%Y-%m-%d %H:%M:%S")
+        scheduler_running = scheduler.running
 
     return {
         "is_running": is_running,
-        "scheduler_running": scheduler.running,
+        "scheduler_running": scheduler_running,
         "next_run": next_run,
         "total_runs": len(run_history),
         "last_run": run_history[0] if run_history else None,
@@ -295,7 +314,6 @@ async def api_generate_resume(request: Request):
 请生成定制简历内容："""
 
     try:
-        analyzer = AIAnalyzer()
         from openai import AsyncOpenAI
         client = AsyncOpenAI(
             api_key=settings.OPENAI_API_KEY,
@@ -358,10 +376,16 @@ def _format_profile_for_ai(profile: dict) -> str:
 
 # ==================== BOSS 直聘 API ====================
 
+def _boss_unavailable():
+    """Vercel 环境下 BOSS 功能不可用"""
+    return JSONResponse(status_code=503, content={"ok": False, "error": "BOSS 直聘功能需要在本地运行"})
+
 
 @app.get("/api/boss/status")
 async def api_boss_status():
     """检查 BOSS 直聘登录状态"""
+    if IS_VERCEL:
+        return {"logged_in": False, "message": "云端部署暂不支持 BOSS 直聘功能"}
     boss = BossScraper()
     result = await boss.check_status()
     return result
@@ -370,6 +394,8 @@ async def api_boss_status():
 @app.post("/api/boss/login")
 async def api_boss_login():
     """触发 BOSS 直聘登录"""
+    if IS_VERCEL:
+        return _boss_unavailable()
     boss = BossScraper()
     result = await boss.login(timeout=120)
     return result
@@ -378,6 +404,8 @@ async def api_boss_login():
 @app.post("/api/boss/search")
 async def api_boss_search(request: Request):
     """BOSS 直聘搜索职位"""
+    if IS_VERCEL:
+        return _boss_unavailable()
     data = await request.json()
     boss = BossScraper()
     jobs = await boss.search_jobs(
@@ -398,6 +426,8 @@ async def api_boss_search(request: Request):
 @app.get("/api/boss/recommend")
 async def api_boss_recommend(page: int = 1):
     """BOSS 直聘个性化推荐"""
+    if IS_VERCEL:
+        return _boss_unavailable()
     boss = BossScraper()
     jobs = await boss.get_recommend(page=page, with_score=True)
     return {"jobs": jobs, "total": len(jobs)}
@@ -406,6 +436,8 @@ async def api_boss_recommend(page: int = 1):
 @app.post("/api/boss/greet")
 async def api_boss_greet(request: Request):
     """向招聘者打招呼"""
+    if IS_VERCEL:
+        return _boss_unavailable()
     data = await request.json()
     security_id = data.get("security_id", "")
     job_id = data.get("job_id", "")
@@ -422,6 +454,8 @@ async def api_boss_greet(request: Request):
 @app.post("/api/boss/batch-greet")
 async def api_boss_batch_greet(request: Request):
     """批量打招呼"""
+    if IS_VERCEL:
+        return _boss_unavailable()
     data = await request.json()
     query = data.get("query", "")
     if not query:
@@ -443,6 +477,8 @@ async def api_boss_batch_greet(request: Request):
 @app.get("/api/boss/chat")
 async def api_boss_chat(from_who: Optional[str] = None, days: Optional[int] = None, page: int = 1):
     """获取沟通列表"""
+    if IS_VERCEL:
+        return _boss_unavailable()
     boss = BossScraper()
     chats = await boss.get_chat_list(from_who=from_who, days=days, page=page)
     return {"chats": chats, "total": len(chats)}
@@ -451,6 +487,8 @@ async def api_boss_chat(from_who: Optional[str] = None, days: Optional[int] = No
 @app.get("/api/boss/interviews")
 async def api_boss_interviews():
     """获取面试邀请"""
+    if IS_VERCEL:
+        return _boss_unavailable()
     boss = BossScraper()
     interviews = await boss.get_interviews()
     return {"interviews": interviews, "total": len(interviews)}
@@ -459,6 +497,8 @@ async def api_boss_interviews():
 @app.get("/api/boss/digest")
 async def api_boss_digest():
     """获取日报汇总"""
+    if IS_VERCEL:
+        return _boss_unavailable()
     boss = BossScraper()
     digest = await boss.get_digest()
     return digest or {"error": "获取日报失败"}
@@ -467,6 +507,8 @@ async def api_boss_digest():
 @app.get("/api/boss/stats")
 async def api_boss_stats(days: int = 30):
     """获取投递统计"""
+    if IS_VERCEL:
+        return _boss_unavailable()
     boss = BossScraper()
     stats = await boss.get_stats(days=days)
     return stats or {"error": "获取统计失败"}
@@ -475,6 +517,8 @@ async def api_boss_stats(days: int = 30):
 @app.get("/api/boss/me")
 async def api_boss_me(section: Optional[str] = None):
     """获取 BOSS 个人信息"""
+    if IS_VERCEL:
+        return _boss_unavailable()
     boss = BossScraper()
     info = await boss.get_my_info(section=section)
     return info or {"error": "获取个人信息失败"}
