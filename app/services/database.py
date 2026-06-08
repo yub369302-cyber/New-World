@@ -1,22 +1,29 @@
 """
 Supabase 数据库服务
 管理用户认证和档案数据的云端存储
+使用 REST API 直接调用，兼容新版 sb_publishable_ 格式的 API key
 """
-from supabase import create_client, Client
+import httpx
 
 from app.config import settings
 
-_client: Client | None = None
+# Supabase REST API 基础配置
+_base_url = settings.SUPABASE_URL
+_api_key = settings.SUPABASE_KEY
+_headers = {
+    "apikey": _api_key,
+    "Content-Type": "application/json",
+}
 
 
-def get_supabase() -> Client:
-    """获取 Supabase 客户端单例"""
-    global _client
-    if _client is None:
-        if not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
-            raise RuntimeError("Supabase 未配置，请在 .env 中设置 SUPABASE_URL 和 SUPABASE_KEY")
-        _client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-    return _client
+def _auth_headers(access_token: str = None) -> dict:
+    """生成请求头"""
+    h = {**_headers}
+    if access_token:
+        h["Authorization"] = f"Bearer {access_token}"
+    else:
+        h["Authorization"] = f"Bearer {_api_key}"
+    return h
 
 
 # ==================== 用户认证 ====================
@@ -25,62 +32,79 @@ def get_supabase() -> Client:
 def sign_up(email: str, password: str) -> dict:
     """用户注册"""
     try:
-        client = get_supabase()
-        result = client.auth.sign_up({"email": email, "password": password})
-        if result.user:
+        url = f"{_base_url}/auth/v1/signup"
+        payload = {"email": email, "password": password}
+        with httpx.Client(timeout=15) as client:
+            resp = client.post(url, json=payload, headers=_headers)
+
+        if resp.status_code == 200:
+            data = resp.json()
+            user = data.get("user") or data
+            session = data.get("session") or {}
             return {
                 "ok": True,
                 "user": {
-                    "id": result.user.id,
-                    "email": result.user.email,
+                    "id": user.get("id", ""),
+                    "email": user.get("email", email),
                 },
                 "session": {
-                    "access_token": result.session.access_token if result.session else None,
-                    "refresh_token": result.session.refresh_token if result.session else None,
+                    "access_token": session.get("access_token") or data.get("access_token"),
+                    "refresh_token": session.get("refresh_token") or data.get("refresh_token"),
                 },
             }
-        return {"ok": False, "error": "注册失败，请稍后重试"}
+        else:
+            error_data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            error_msg = error_data.get("error_description") or error_data.get("msg") or error_data.get("message") or resp.text
+            if "already registered" in str(error_msg).lower():
+                return {"ok": False, "error": "该邮箱已注册，请直接登录"}
+            return {"ok": False, "error": f"注册失败: {error_msg}"}
     except Exception as e:
-        error_msg = str(e)
-        if "already registered" in error_msg.lower() or "already been registered" in error_msg.lower():
-            return {"ok": False, "error": "该邮箱已注册，请直接登录"}
-        return {"ok": False, "error": f"注册失败: {error_msg}"}
+        return {"ok": False, "error": f"注册失败: {str(e)}"}
 
 
 def sign_in(email: str, password: str) -> dict:
     """用户登录"""
     try:
-        client = get_supabase()
-        result = client.auth.sign_in_with_password({"email": email, "password": password})
-        if result.user and result.session:
+        url = f"{_base_url}/auth/v1/token?grant_type=password"
+        payload = {"email": email, "password": password}
+        with httpx.Client(timeout=15) as client:
+            resp = client.post(url, json=payload, headers=_headers)
+
+        if resp.status_code == 200:
+            data = resp.json()
+            user = data.get("user", {})
             return {
                 "ok": True,
                 "user": {
-                    "id": result.user.id,
-                    "email": result.user.email,
+                    "id": user.get("id", ""),
+                    "email": user.get("email", email),
                 },
                 "session": {
-                    "access_token": result.session.access_token,
-                    "refresh_token": result.session.refresh_token,
+                    "access_token": data.get("access_token", ""),
+                    "refresh_token": data.get("refresh_token", ""),
                 },
             }
-        return {"ok": False, "error": "登录失败"}
+        else:
+            error_data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            error_msg = error_data.get("error_description") or error_data.get("msg") or error_data.get("message") or "邮箱或密码错误"
+            return {"ok": False, "error": error_msg}
     except Exception as e:
-        error_msg = str(e)
-        if "invalid" in error_msg.lower():
-            return {"ok": False, "error": "邮箱或密码错误"}
-        return {"ok": False, "error": f"登录失败: {error_msg}"}
+        return {"ok": False, "error": f"登录失败: {str(e)}"}
 
 
 def get_user_from_token(access_token: str) -> dict | None:
     """通过 access_token 获取当前用户信息"""
     try:
-        client = get_supabase()
-        result = client.auth.get_user(access_token)
-        if result.user:
+        url = f"{_base_url}/auth/v1/user"
+        headers = _auth_headers(access_token)
+        with httpx.Client(timeout=10) as client:
+            resp = client.get(url, headers=headers)
+
+        if resp.status_code == 200:
+            user = resp.json()
             return {
-                "id": result.user.id,
-                "email": result.user.email,
+                "id": user.get("id", ""),
+                "email": user.get("email", ""),
             }
         return None
     except Exception:
@@ -90,14 +114,18 @@ def get_user_from_token(access_token: str) -> dict | None:
 def refresh_session(refresh_token: str) -> dict:
     """刷新会话"""
     try:
-        client = get_supabase()
-        result = client.auth.refresh_session(refresh_token)
-        if result.session:
+        url = f"{_base_url}/auth/v1/token?grant_type=refresh_token"
+        payload = {"refresh_token": refresh_token}
+        with httpx.Client(timeout=10) as client:
+            resp = client.post(url, json=payload, headers=_headers)
+
+        if resp.status_code == 200:
+            data = resp.json()
             return {
                 "ok": True,
                 "session": {
-                    "access_token": result.session.access_token,
-                    "refresh_token": result.session.refresh_token,
+                    "access_token": data.get("access_token", ""),
+                    "refresh_token": data.get("refresh_token", ""),
                 },
             }
         return {"ok": False, "error": "刷新失败"}
@@ -111,19 +139,22 @@ def refresh_session(refresh_token: str) -> dict:
 def save_profile(user_id: str, profile_data: dict) -> dict:
     """保存用户档案（upsert）"""
     try:
-        client = get_supabase()
+        url = f"{_base_url}/rest/v1/profiles"
+        headers = _auth_headers(_api_key)
+        headers["Prefer"] = "resolution=merge-duplicates"
+
         row = {
             "user_id": user_id,
             "profile_data": profile_data,
         }
-        result = (
-            client.table("profiles")
-            .upsert(row, on_conflict="user_id")
-            .execute()
-        )
-        if result.data:
+        with httpx.Client(timeout=10) as client:
+            resp = client.post(url, json=row, headers=headers)
+
+        if resp.status_code in (200, 201, 204):
             return {"ok": True, "message": "档案已保存到云端"}
-        return {"ok": False, "error": "保存失败"}
+        else:
+            error_msg = resp.text
+            return {"ok": False, "error": f"保存失败: {error_msg}"}
     except Exception as e:
         return {"ok": False, "error": f"保存失败: {str(e)}"}
 
@@ -131,20 +162,20 @@ def save_profile(user_id: str, profile_data: dict) -> dict:
 def load_profile(user_id: str) -> dict:
     """加载用户档案"""
     try:
-        client = get_supabase()
-        result = (
-            client.table("profiles")
-            .select("profile_data, updated_at")
-            .eq("user_id", user_id)
-            .maybe_single()
-            .execute()
-        )
-        if result.data:
-            return {
-                "ok": True,
-                "profile": result.data["profile_data"],
-                "updated_at": result.data["updated_at"],
-            }
-        return {"ok": True, "profile": None, "updated_at": None}
+        url = f"{_base_url}/rest/v1/profiles?user_id=eq.{user_id}&select=profile_data,updated_at"
+        headers = _auth_headers(_api_key)
+        with httpx.Client(timeout=10) as client:
+            resp = client.get(url, headers=headers)
+
+        if resp.status_code == 200:
+            data = resp.json()
+            if data and len(data) > 0:
+                return {
+                    "ok": True,
+                    "profile": data[0].get("profile_data"),
+                    "updated_at": data[0].get("updated_at"),
+                }
+            return {"ok": True, "profile": None, "updated_at": None}
+        return {"ok": False, "error": f"加载失败: {resp.text}"}
     except Exception as e:
         return {"ok": False, "error": f"加载失败: {str(e)}"}

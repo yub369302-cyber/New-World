@@ -13,4 +13,4 @@ aiosmtplib==3.0.1
 email-validator==2.1.0
 serpapi==0.1.5
 google-search-results==2.4.2
-supabase>=2.0.0
+# supabase SDK 不再需要，改用 httpx 直接调用 REST API
